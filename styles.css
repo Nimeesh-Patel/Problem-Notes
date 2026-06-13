@@ -40,16 +40,29 @@
 }
 
 /*
- * Section-mode hiding: answer blocks are hidden until the shared reading-view
- * container is marked revealed (the reveal bar toggles that class).
+ * Section-mode hiding. The separator's section-level anchor is tagged
+ * `.pn-reveal-block` (either the bar itself or the section wrapping it); every
+ * rendered block AFTER it is the answer and stays hidden until the anchor is
+ * marked `.pn-revealed`. Keyed purely off DOM order, so blocks Obsidian lazily
+ * renders on scroll are hidden the moment they appear — no per-block JS.
+ * Skip Obsidian's own structural siblings: the virtual-scroll spacer and the
+ * note footer (backlinks / embedded links) must never be hidden.
  */
-.markdown-preview-view .pn-answer,
-.markdown-rendered .pn-answer {
+.pn-reveal-block ~ *:not(.markdown-preview-pusher):not(.mod-footer) {
 	display: none;
 }
 
-.markdown-preview-view.pn-revealed .pn-answer,
-.markdown-rendered.pn-revealed .pn-answer {
+.pn-reveal-block.pn-revealed ~ *:not(.markdown-preview-pusher):not(.mod-footer) {
+	display: revert;
+}
+
+/* Trailing answer content sharing the separator's own block (single-element
+ * renders / embeds), toggled by the same reveal bar. */
+.pn-reveal-block .pn-answer {
+	display: none;
+}
+
+.pn-reveal-block.pn-revealed .pn-answer {
 	display: revert;
 }
 

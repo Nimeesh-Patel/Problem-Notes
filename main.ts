@@ -1,6 +1,7 @@
 import {
 	App,
 	MarkdownPostProcessorContext,
+	MarkdownRenderChild,
 	Plugin,
 	PluginSettingTab,
 	Setting,
@@ -15,11 +16,10 @@ const SYNC_URI = "interest://sync-anki";
 
 /**
  * A "***" line on its own is the problem/answer separator. The user only ever
- * uses "***" for this purpose (never as a horizontal rule, never as bold), so a
- * standalone line of three-or-more asterisks can be treated as the separator
- * unconditionally. Obsidian renders such a line as an <hr> element.
+ * uses "***" for this purpose (never as a horizontal rule, never as bold), so
+ * Obsidian rendering it as an <hr> is a reliable signal: we treat the first
+ * <hr> in a reading-mode render as the separator unconditionally.
  */
-const SEPARATOR_RE = /^\*{3,}$/;
 
 interface ProblemNotesSettings {
 	enableReveal: boolean;
@@ -66,127 +66,173 @@ export default class ProblemNotesPlugin extends Plugin {
 	}
 
 	/**
-	 * Reading-mode post-processor. Obsidian renders reading view section by
-	 * section and calls this once per rendered block, so we cannot assume the
-	 * whole note arrives in one `el`. We use ctx.getSectionInfo() — which gives
-	 * the full source text plus this block's line range — to decide what each
-	 * block is relative to the FIRST separator:
-	 *   • the block that *is* the separator  -> replace its <hr> with a reveal bar
-	 *   • any block after the separator       -> mark as hidden answer content
-	 *   • blocks before the separator         -> left untouched
-	 * Hide/reveal is coordinated by a class on the shared reading-view container
-	 * so the single reveal bar toggles all answer blocks at once, and survives
-	 * Obsidian re-rendering blocks as you scroll.
+	 * Reading-mode post-processor. It runs synchronously while Obsidian is still
+	 * building a block, BEFORE that block is attached to the document — so
+	 * `el.closest(...)` and `ctx.getSectionInfo()` are both unreliable here.
+	 * That timing is exactly why earlier versions broke on fresh load / nav /
+	 * restart: the work ran before the DOM context existed.
+	 *
+	 * So we do NOTHING here except register a MarkdownRenderChild on the block.
+	 * Its onload() fires AFTER the block is in the DOM, where we can reliably
+	 * find the reading-view container and partition the note. The render child
+	 * re-runs on every render, so the reveal is re-established each time without
+	 * any dependence on getSectionInfo or on state shared across blocks.
 	 */
 	renderProblemNote(el: HTMLElement, ctx: MarkdownPostProcessorContext) {
 		if (!this.settings.enableReveal) return;
 
-		const info = ctx.getSectionInfo(el);
+		// Only the block that rendered the *** (an <hr>) needs setup. Every
+		// other block is handled in CSS, so skip the render-child overhead.
+		if (!el.querySelector("hr")) return;
 
-		// Fallback: no section info (e.g. embeds / exported HTML) means the
-		// content may have been rendered as one element — partition it locally.
-		if (!info) {
+		ctx.addChild(new RevealRenderChild(el, this));
+	}
+
+	/**
+	 * Partition the rendered note around its FIRST <hr> (the *** separator).
+	 * Runs from a render child's onload, i.e. once `el` is in the document.
+	 *
+	 * Returns false ONLY if `el` is not yet attached (no container found and
+	 * not connected) so the caller can retry on the next frame. Otherwise it
+	 * has either installed the reveal bar or decided there is nothing to do.
+	 */
+	partitionRenderedNote(el: HTMLElement): boolean {
+		const hr = el.querySelector("hr");
+		if (!hr) return true; // block re-rendered without an hr — nothing to do
+
+		// The reading-view container whose direct children are the per-block
+		// section wrappers (.markdown-preview-sizer in a pane, .markdown-rendered
+		// in embeds/exports). `closest` is reliable now that el is attached.
+		const container = el.closest(
+			".markdown-preview-sizer, .markdown-rendered"
+		) as HTMLElement | null;
+
+		if (container && container !== el) {
+			// Only the FIRST *** is the separator (one *** per note, by
+			// convention). If a bar already exists, leave later *** as plain
+			// rules and don't double-process.
+			if (container.querySelector(".pn-reveal-bar")) return true;
+			this.installRevealBar(hr, container);
+			return true;
+		}
+
+		// No recognizable section container. If el is attached, the whole note
+		// arrived as one element (embed / exported HTML): partition locally.
+		if (el.isConnected) {
 			this.partitionWithinEl(el);
+			return true;
+		}
+
+		return false; // not attached yet — ask caller to retry
+	}
+
+	/**
+	 * Replace the separator's <hr> with the reveal bar and arrange for every
+	 * answer block to be hidden until revealed. The reveal STATE lives on a
+	 * single section-level "anchor" element that sits immediately before the
+	 * answer blocks; a CSS sibling rule (`.pn-reveal-block ~ *`) then hides the
+	 * answers purely by DOM position. That is what survives Obsidian's lazy
+	 * re-rendering: blocks rendered later on scroll are hidden the moment they
+	 * appear, with no per-block JS and no shared-ancestor coordination.
+	 */
+	private installRevealBar(hr: HTMLElement, container: HTMLElement) {
+		// The section = the container's direct child that holds the hr. This is
+		// the sibling of the answer blocks, so it must carry the reveal state.
+		let section: HTMLElement = hr;
+		while (section.parentElement && section.parentElement !== container) {
+			section = section.parentElement;
+		}
+
+		const bar = this.buildRevealBar();
+
+		if (section === hr) {
+			// The hr is itself a direct child of the container: the bar takes
+			// its place at section level and IS the (plugin-owned) anchor.
+			hr.replaceWith(bar);
+			bar.addClass("pn-reveal-block");
+			this.wireRevealBar(bar, bar);
 			return;
 		}
 
-		const lines = info.text.split("\n");
-		const sepLine = lines.findIndex((l) => SEPARATOR_RE.test(l.trim()));
-		if (sepLine === -1) return; // not a problem note
-
-		// The persistent per-pane container we toggle the revealed state on.
-		const container = el.closest(
-			".markdown-preview-view, .markdown-rendered"
-		) as HTMLElement | null;
-		// Safety: never hide content we have no control to reveal again.
-		if (!container) return;
-
-		if (info.lineStart <= sepLine && sepLine <= info.lineEnd) {
-			// This block contains the separator line.
-			this.installRevealBar(el, container);
-		} else if (info.lineStart > sepLine) {
-			// This block is part of the answer.
-			el.addClass("pn-answer");
+		// The hr is wrapped in a section. Tag that section as the anchor and
+		// replace the hr inside it with the bar. Any trailing content that
+		// shared the separator's section is folded into a hidden group governed
+		// by the same state.
+		const answer = createDiv({ cls: "pn-answer" });
+		let node = hr.nextSibling;
+		while (node) {
+			const next = node.nextSibling;
+			answer.appendChild(node);
+			node = next;
 		}
+		hr.replaceWith(bar);
+		if (answer.childNodes.length) bar.after(answer);
+		section.addClass("pn-reveal-block");
+		this.wireRevealBar(bar, section);
 	}
 
 	/**
-	 * Replace the rendered <hr> with a reveal bar, and (for the case where a
-	 * single block also contains following content) move that trailing content
-	 * into a hidden answer group. Subsequent answer blocks are handled
-	 * separately via the `pn-answer` class.
-	 */
-	private installRevealBar(el: HTMLElement, container: HTMLElement) {
-		const hr = el.querySelector("hr");
-		const bar = this.createRevealBar(
-			() => container.classList.contains("pn-revealed"),
-			() => container.classList.toggle("pn-revealed")
-		);
-
-		if (hr) {
-			// Move anything after the <hr> within this same element into a
-			// hidden group (covers the rare "block contains more than the hr").
-			const answer = createDiv({ cls: "pn-answer" });
-			let node = hr.nextSibling;
-			while (node) {
-				const next = node.nextSibling;
-				answer.appendChild(node);
-				node = next;
-			}
-			hr.replaceWith(bar);
-			if (answer.childNodes.length) el.appendChild(answer);
-		} else {
-			el.appendChild(bar);
-		}
-	}
-
-	/**
-	 * Fallback used when the whole note is rendered into one element. We
-	 * partition that element's direct children at the first <hr>: everything
-	 * after it goes into a locally-toggled hidden wrapper.
+	 * Fallback for whole-note-in-one-element renders (embeds / exported HTML).
+	 * Everything after the first <hr> is moved into a plugin-owned wrapper that
+	 * the bar toggles directly — fully self-contained, no ancestor needed.
 	 */
 	private partitionWithinEl(el: HTMLElement) {
-		const children = Array.from(el.children);
-		const sepIndex = children.findIndex((c) => c.tagName === "HR");
-		if (sepIndex === -1) return;
+		const hr = el.querySelector("hr");
+		if (!hr || el.querySelector(".pn-reveal-bar")) return;
 
-		const wrapper = createDiv({ cls: "pn-answer-wrapper" });
-		for (const node of children.slice(sepIndex + 1)) {
-			wrapper.appendChild(node);
+		// The top-level child of el that holds the hr.
+		let top: HTMLElement = hr;
+		while (top.parentElement && top.parentElement !== el) {
+			top = top.parentElement;
 		}
 
-		const bar = this.createRevealBar(
-			() => wrapper.classList.contains("pn-revealed"),
-			() => wrapper.classList.toggle("pn-revealed")
-		);
-		children[sepIndex].replaceWith(bar);
+		const wrapper = createDiv({ cls: "pn-answer-wrapper" });
+		// 1) Content after the hr within its own block, in order.
+		let inline = hr.nextSibling;
+		while (inline) {
+			const next = inline.nextSibling;
+			wrapper.appendChild(inline);
+			inline = next;
+		}
+		// 2) Every block after the hr's block, in order.
+		let block = top.nextSibling;
+		while (block) {
+			const next = block.nextSibling;
+			wrapper.appendChild(block);
+			block = next;
+		}
+
+		const bar = this.buildRevealBar();
+		hr.replaceWith(bar);
 		el.appendChild(wrapper);
+		this.wireRevealBar(bar, wrapper);
 	}
 
-	/**
-	 * Build the tap-to-reveal affordance. `isRevealed` reads current state and
-	 * `toggle` flips it; the bar re-reads state after each toggle so its label
-	 * stays correct even when a fresh bar is created on re-render.
-	 */
-	private createRevealBar(
-		isRevealed: () => boolean,
-		toggle: () => void
-	): HTMLElement {
+	/** Build the bar element (presentation only; behaviour added by wireRevealBar). */
+	private buildRevealBar(): HTMLElement {
 		const bar = createDiv({ cls: "pn-reveal-bar" });
 		bar.setAttribute("role", "button");
 		bar.setAttribute("tabindex", "0");
+		return bar;
+	}
 
+	/**
+	 * Wire the bar to toggle `pn-revealed` on `anchor` (the element that carries
+	 * the reveal state — a section wrapper, the bar itself, or the fallback
+	 * answer wrapper). The bar re-reads the anchor's state after each toggle so
+	 * its label stays correct even on a freshly built bar after re-render.
+	 */
+	private wireRevealBar(bar: HTMLElement, anchor: HTMLElement) {
 		const sync = () => {
-			const revealed = isRevealed();
+			const revealed = anchor.classList.contains("pn-revealed");
 			bar.toggleClass("pn-revealed", revealed);
 			bar.setAttribute("aria-expanded", revealed ? "true" : "false");
 			bar.setText(revealed ? "Hide answer" : "Tap to reveal");
 		};
-		sync();
 
 		const onToggle = (e: Event) => {
 			e.preventDefault();
-			toggle();
+			anchor.toggleClass("pn-revealed", !anchor.classList.contains("pn-revealed"));
 			sync();
 		};
 		bar.addEventListener("click", onToggle);
@@ -194,7 +240,7 @@ export default class ProblemNotesPlugin extends Plugin {
 			if (e.key === "Enter" || e.key === " ") onToggle(e);
 		});
 
-		return bar;
+		sync();
 	}
 
 	async loadSettings() {
@@ -203,6 +249,37 @@ export default class ProblemNotesPlugin extends Plugin {
 
 	async saveSettings() {
 		await this.saveData(this.settings);
+	}
+}
+
+/**
+ * Render child attached to the separator's block. Obsidian calls onload() once
+ * the block is in the DOM, which is the earliest point the reading-view
+ * container can be located reliably (the post-processor callback runs too
+ * early). The work re-runs on every render, so the reveal is re-established
+ * after navigation and restart without depending on getSectionInfo.
+ */
+class RevealRenderChild extends MarkdownRenderChild {
+	private done = false;
+
+	constructor(containerEl: HTMLElement, private plugin: ProblemNotesPlugin) {
+		super(containerEl);
+	}
+
+	onload() {
+		// Normally the element is already attached here. If not (some render
+		// paths attach a frame later), retry once on the next frame rather than
+		// falling back to the unreliable detached-DOM path.
+		if (this.plugin.partitionRenderedNote(this.containerEl)) {
+			this.done = true;
+			return;
+		}
+		const raf = requestAnimationFrame(() => {
+			if (!this.done) {
+				this.done = this.plugin.partitionRenderedNote(this.containerEl);
+			}
+		});
+		this.register(() => cancelAnimationFrame(raf));
 	}
 }
 
