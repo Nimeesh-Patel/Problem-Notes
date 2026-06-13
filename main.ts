@@ -30,7 +30,7 @@ const DEFAULT_SETTINGS: ProblemNotesSettings = {
 };
 
 export default class ProblemNotesPlugin extends Plugin {
-	settings: ProblemNotesSettings;
+	settings!: ProblemNotesSettings;
 
 	async onload() {
 		await this.loadSettings();
