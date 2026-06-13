@@ -1,0 +1,10 @@
+{
+	"id": "problem-notes",
+	"name": "Problem Notes",
+	"version": "1.0.0",
+	"minAppVersion": "1.5.0",
+	"description": "Renders notes with a *** separator as tap-to-reveal problem/answer cards, and adds a one-tap AnkiDroid sync.",
+	"author": "Nimeesh Patel",
+	"authorUrl": "",
+	"isDesktopOnly": false
+}

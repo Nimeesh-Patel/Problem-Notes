@@ -1,0 +1,10 @@
+# build / dependencies
+node_modules/
+
+# build output (uncomment if you don't want to commit the built plugin)
+# main.js
+*.js.map
+
+# obsidian / editor cruft
+.DS_Store
+data.json

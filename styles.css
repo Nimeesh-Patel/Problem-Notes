@@ -1,0 +1,63 @@
+/*
+ * Problem Notes — calm, minimal styling.
+ * Uses Obsidian theme variables so it adapts to light/dark and community themes.
+ * No hardcoded colors.
+ */
+
+/* The tap-to-reveal bar that replaces the *** separator. */
+.pn-reveal-bar {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 0.5em;
+	margin: 0.75em 0;
+	padding: 0.5em 0.75em;
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+	background-color: var(--background-secondary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	cursor: pointer;
+	user-select: none;
+	transition: color 0.1s ease, background-color 0.1s ease;
+}
+
+.pn-reveal-bar:hover {
+	color: var(--text-normal);
+	background-color: var(--background-modifier-hover);
+}
+
+.pn-reveal-bar:focus-visible {
+	outline: 2px solid var(--interactive-accent);
+	outline-offset: 2px;
+}
+
+/* Subtle cue that the bar is currently in the "revealed" (toggle-to-hide) state. */
+.pn-reveal-bar.pn-revealed {
+	color: var(--text-faint);
+	background-color: transparent;
+	border-style: dashed;
+}
+
+/*
+ * Section-mode hiding: answer blocks are hidden until the shared reading-view
+ * container is marked revealed (the reveal bar toggles that class).
+ */
+.markdown-preview-view .pn-answer,
+.markdown-rendered .pn-answer {
+	display: none;
+}
+
+.markdown-preview-view.pn-revealed .pn-answer,
+.markdown-rendered.pn-revealed .pn-answer {
+	display: revert;
+}
+
+/* Fallback (whole-note-in-one-element) hiding via a locally-toggled wrapper. */
+.pn-answer-wrapper {
+	display: none;
+}
+
+.pn-answer-wrapper.pn-revealed {
+	display: revert;
+}
