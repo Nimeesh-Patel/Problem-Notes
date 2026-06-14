@@ -2,6 +2,7 @@ import {
 	App,
 	MarkdownPostProcessorContext,
 	MarkdownRenderChild,
+	MarkdownView,
 	Plugin,
 	PluginSettingTab,
 	Setting,
@@ -42,6 +43,14 @@ export default class ProblemNotesPlugin extends Plugin {
 		this.registerMarkdownPostProcessor((el, ctx) =>
 			this.renderProblemNote(el, ctx)
 		);
+
+		// Cold-start fix: on app launch Obsidian restores and paints the
+		// already-open note BEFORE this onload registers the post-processor, so
+		// that first-painted note never gets a RevealRenderChild and renders
+		// without tap-to-reveal until a manual toggle forces a re-render. Once
+		// the workspace has finished restoring its layout, force every open
+		// markdown view to re-render so the post-processor runs on them too.
+		this.app.workspace.onLayoutReady(() => this.rerenderOpenMarkdownViews());
 
 		// ── Feature 2: one-tap AnkiDroid sync ────────────────────────────────
 		this.addRibbonIcon("sync", "Sync to AnkiDroid", () => this.fireSyncUri());
@@ -86,6 +95,22 @@ export default class ProblemNotesPlugin extends Plugin {
 		if (!el.querySelector("hr")) return;
 
 		ctx.addChild(new RevealRenderChild(el, this));
+	}
+
+	/**
+	 * Force every open markdown view's reading-mode preview to re-render, so the
+	 * post-processor (and thus RevealRenderChild) runs on notes that were already
+	 * painted before the plugin finished loading. `rerender(true)` is a full
+	 * reprocess; for a view currently in editing/Live Preview it harmlessly
+	 * applies the next time reading mode is shown.
+	 */
+	private rerenderOpenMarkdownViews() {
+		for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+			const view = leaf.view;
+			if (view instanceof MarkdownView) {
+				view.previewMode?.rerender(true);
+			}
+		}
 	}
 
 	/**
