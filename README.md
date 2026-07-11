@@ -59,7 +59,8 @@ interest://sync-anki
 ```
 
 That custom scheme is registered by a **separate companion Android app**
-("Interest"), which handles the actual whole-vault AnkiDroid sync. This plugin's
+([**Interest**](https://github.com/Nimeesh-Patel/interest)), which handles the
+actual whole-vault AnkiDroid sync. This plugin's
 only job is to fire the URI — it does not talk to Anki, sync anything, or touch
 Anki state. Without a companion app registered to that scheme, the button does
 nothing.
