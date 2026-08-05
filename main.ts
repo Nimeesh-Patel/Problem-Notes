@@ -16,11 +16,17 @@ import {
 const SYNC_URI = "interest://sync-anki";
 
 /**
- * A "***" line on its own is the problem/answer separator. The user only ever
- * uses "***" for this purpose (never as a horizontal rule, never as bold), so
- * Obsidian rendering it as an <hr> is a reliable signal: we treat the first
- * <hr> in a reading-mode render as the separator unconditionally.
+ * A line equal to "***" is the problem/answer separator, and only the first one
+ * in a note splits it.
+ *
+ * An <hr> is NOT that signal. Obsidian renders `---`, `___` and `* * *` as <hr>
+ * as well, and the vault uses `---` as an ordinary thematic break — so treating
+ * the first <hr> as the separator, which this plugin did until 2026-08-05, hid
+ * the contents of 39 book and plan notes behind a reveal bar and split several
+ * real Problem Notes at the wrong place. The rendered <hr> narrows the search;
+ * the Markdown source decides.
  */
+const SEPARATOR = "***";
 
 interface ProblemNotesSettings {
 	enableReveal: boolean;
@@ -90,11 +96,11 @@ export default class ProblemNotesPlugin extends Plugin {
 	renderProblemNote(el: HTMLElement, ctx: MarkdownPostProcessorContext) {
 		if (!this.settings.enableReveal) return;
 
-		// Only the block that rendered the *** (an <hr>) needs setup. Every
-		// other block is handled in CSS, so skip the render-child overhead.
+		// Only a block that rendered an <hr> can be the separator. Every other
+		// block is handled in CSS, so skip the render-child overhead.
 		if (!el.querySelector("hr")) return;
 
-		ctx.addChild(new RevealRenderChild(el, this));
+		ctx.addChild(new RevealRenderChild(el, this, ctx));
 	}
 
 	/**
@@ -121,9 +127,19 @@ export default class ProblemNotesPlugin extends Plugin {
 	 * not connected) so the caller can retry on the next frame. Otherwise it
 	 * has either installed the reveal bar or decided there is nothing to do.
 	 */
-	partitionRenderedNote(el: HTMLElement): boolean {
+	partitionRenderedNote(
+		el: HTMLElement,
+		ctx: MarkdownPostProcessorContext
+	): boolean {
 		const hr = el.querySelector("hr");
 		if (!hr) return true; // block re-rendered without an hr — nothing to do
+
+		// An <hr> is not the separator. Obsidian renders `---`, `___` and
+		// `* * *` as <hr> too, and the vault uses `---` as an ordinary thematic
+		// break in book and plan notes. Partitioning on the first <hr> hid the
+		// contents of 39 such notes behind a reveal bar they never asked for.
+		// The convention is a line equal to `***`, so check the source.
+		if (!authoredSeparator(el, ctx)) return true;
 
 		// The reading-view container whose direct children are the per-block
 		// section wrappers (.markdown-preview-sizer in a pane, .markdown-rendered
@@ -284,10 +300,41 @@ export default class ProblemNotesPlugin extends Plugin {
  * early). The work re-runs on every render, so the reveal is re-established
  * after navigation and restart without depending on getSectionInfo.
  */
+/**
+ * True only when this block's Markdown source is the authored `***` separator.
+ *
+ * `getSectionInfo` is unreliable during post-processing but is expected to be
+ * sound from a render child's onload(), which is where this runs. That
+ * expectation is not yet verified in a running app, so when it cannot answer —
+ * embeds, exported HTML, canvas, or a path where the assumption turns out to be
+ * wrong — this falls back to the previous behaviour of treating the <hr> as the
+ * separator.
+ *
+ * The fallback direction is deliberate. Over-triggering hides a note's content
+ * behind a bar the reader can still tap; under-triggering would silently
+ * disable tap-to-reveal on every Problem Note. Until the assumption is
+ * confirmed, the recoverable error is the safer one.
+ */
+function authoredSeparator(
+	el: HTMLElement,
+	ctx: MarkdownPostProcessorContext
+): boolean {
+	const info = ctx.getSectionInfo(el);
+	if (!info) return true;
+	return info.text
+		.split("\n")
+		.slice(info.lineStart, info.lineEnd + 1)
+		.some((line) => line.trim() === SEPARATOR);
+}
+
 class RevealRenderChild extends MarkdownRenderChild {
 	private done = false;
 
-	constructor(containerEl: HTMLElement, private plugin: ProblemNotesPlugin) {
+	constructor(
+		containerEl: HTMLElement,
+		private plugin: ProblemNotesPlugin,
+		private ctx: MarkdownPostProcessorContext
+	) {
 		super(containerEl);
 	}
 
@@ -295,13 +342,16 @@ class RevealRenderChild extends MarkdownRenderChild {
 		// Normally the element is already attached here. If not (some render
 		// paths attach a frame later), retry once on the next frame rather than
 		// falling back to the unreliable detached-DOM path.
-		if (this.plugin.partitionRenderedNote(this.containerEl)) {
+		if (this.plugin.partitionRenderedNote(this.containerEl, this.ctx)) {
 			this.done = true;
 			return;
 		}
 		const raf = requestAnimationFrame(() => {
 			if (!this.done) {
-				this.done = this.plugin.partitionRenderedNote(this.containerEl);
+				this.done = this.plugin.partitionRenderedNote(
+					this.containerEl,
+					this.ctx
+				);
 			}
 		});
 		this.register(() => cancelAnimationFrame(raf));

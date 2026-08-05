@@ -41,8 +41,32 @@ const context = await esbuild.context({
 	minify: prod,
 });
 
+/**
+ * Copy the build into a live vault when one is named.
+ *
+ * Obsidian loads a plugin from `<vault>/.obsidian/plugins/<id>/`, not from this
+ * repository, so a build that stops at `main.js` has changed nothing the user
+ * can see. There was no deploy step at all, which meant the running plugin and
+ * the source could diverge silently and only a byte comparison would say so.
+ *
+ * The vault path is supplied rather than hard-coded: it is irreducibly
+ * particular to a machine, so it belongs in the environment, not in the build.
+ *   OBSIDIAN_PLUGIN_DIR=".../.obsidian/plugins/problem-notes" npm run build
+ */
+async function deploy() {
+	const target = process.env.OBSIDIAN_PLUGIN_DIR;
+	if (!target) return;
+	const { copyFile, mkdir } = await import("node:fs/promises");
+	await mkdir(target, { recursive: true });
+	for (const file of ["main.js", "manifest.json", "styles.css"]) {
+		await copyFile(file, `${target}/${file}`);
+	}
+	console.log(`deployed main.js, manifest.json, styles.css -> ${target}`);
+}
+
 if (prod) {
 	await context.rebuild();
+	await deploy();
 	process.exit(0);
 } else {
 	await context.watch();
