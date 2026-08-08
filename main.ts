@@ -7,6 +7,7 @@ import {
 	PluginSettingTab,
 	Setting,
 } from "obsidian";
+import { parseProblemNoteStructure } from "./problem_note_contract";
 
 /**
  * The custom URI scheme handled by the companion "Interest" Android app.
@@ -26,8 +27,6 @@ const SYNC_URI = "interest://sync-anki";
  * real Problem Notes at the wrong place. The rendered <hr> narrows the search;
  * the Markdown source decides.
  */
-const SEPARATOR = "***";
-
 interface ProblemNotesSettings {
 	enableReveal: boolean;
 }
@@ -321,10 +320,10 @@ function authoredSeparator(
 ): boolean {
 	const info = ctx.getSectionInfo(el);
 	if (!info) return true;
-	return info.text
-		.split("\n")
-		.slice(info.lineStart, info.lineEnd + 1)
-		.some((line) => line.trim() === SEPARATOR);
+	const parsed = parseProblemNoteStructure(info.text);
+	return parsed.separatorLine !== null &&
+		parsed.separatorLine >= info.lineStart &&
+		parsed.separatorLine <= info.lineEnd;
 }
 
 class RevealRenderChild extends MarkdownRenderChild {
