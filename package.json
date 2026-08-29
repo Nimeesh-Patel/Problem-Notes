@@ -13,7 +13,7 @@
 		"obsidian",
 		"obsidian-plugin"
 	],
-	"author": "Nimeesh Patel",
+	"author": "Problem Notes contributors",
 	"license": "MIT",
 	"devDependencies": {
 		"@types/node": "^16.11.6",

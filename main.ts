@@ -10,15 +10,15 @@ import {
 import { parseProblemNoteStructure } from "./problem_note_contract";
 
 /**
- * The custom URI scheme handled by the companion "Interest" Android app.
- * Firing this deep link triggers a whole-vault AnkiDroid sync inside that app.
- * This plugin's ONLY job is to fire the string — it never talks to Anki itself.
+ * The companion "Interest" Android app registers this URI as its whole-vault
+ * AnkiDroid-sync entry point. This plugin only asks the OS to open the URI; it
+ * never talks to Anki itself.
  */
 const SYNC_URI = "interest://sync-anki";
 
 /**
- * A line equal to "***" is the problem/answer separator, and only the first one
- * in a note splits it.
+ * The first line whose trimmed Markdown source is "***", outside a
+ * triple-backtick code fence, is the problem/answer separator.
  *
  * An <hr> is NOT that signal. Obsidian renders `---`, `___` and `* * *` as <hr>
  * as well, and the vault uses `---` as an ordinary thematic break — so treating
@@ -70,10 +70,9 @@ export default class ProblemNotesPlugin extends Plugin {
 	}
 
 	/**
-	 * Fire the companion app's deep link. Obsidian has no dedicated
-	 * cross-platform "open external URI" API, so window.open() is the reliable
-	 * mechanism for handing a custom-scheme URI to the OS. This is the
-	 * mobile-launch path and NEEDS ON-DEVICE VERIFICATION on Android.
+	 * Fire the companion app's deep link through the mechanism currently used by
+	 * the plugin. Source-side URI registration is aligned with the companion app;
+	 * successful OS dispatch still needs on-device verification on Android.
 	 */
 	fireSyncUri() {
 		window.open(SYNC_URI);
@@ -137,7 +136,7 @@ export default class ProblemNotesPlugin extends Plugin {
 		// `* * *` as <hr> too, and the vault uses `---` as an ordinary thematic
 		// break in book and plan notes. Partitioning on the first <hr> hid the
 		// contents of 39 such notes behind a reveal bar they never asked for.
-		// The convention is a line equal to `***`, so check the source.
+		// The convention is a qualifying `***` source line, so check the source.
 		if (!authoredSeparator(el, ctx)) return true;
 
 		// The reading-view container whose direct children are the per-block

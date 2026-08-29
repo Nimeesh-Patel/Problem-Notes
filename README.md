@@ -7,12 +7,14 @@ An Obsidian plugin with two small, unrelated features:
 2. **One-tap AnkiDroid sync** — a sidebar button that fires a deep link to a
    companion Android app.
 
-Works on desktop and mobile. The plugin **never modifies your notes** — it only
-changes how reading mode renders them, and it fires a URI.
+The reading-mode renderer targets desktop and mobile. The plugin **never modifies
+your notes** — it only changes how reading mode renders them, and it fires a URI.
+The Android custom-URI handoff has not yet been verified on a device.
 
 ## The `***` convention
 
-A note containing a line that is exactly `***` is a *Problem Note*:
+A note containing a line whose trimmed content is `***` is structurally a
+*Problem Note* when that line is outside a triple-backtick code fence:
 
 - Everything **above** `***` is the problem / question.
 - Everything **below** `***` is the current best answer.
@@ -28,9 +30,16 @@ The best current answer goes here, with [[wikilinks]] and **formatting**
 fully working.
 ```
 
-`***` is treated as a problem/answer separator unconditionally (use `---` for
-horizontal rules). Only the **first** `***` in a note defines the split;
-anything after it is all "answer side".
+Only the **first** qualifying `***` line defines the split; anything after it is
+all "answer side". A fenced `***` example is not a separator. Structurally empty
+sides are accepted by the renderer, but the companion Anki sync reviews only
+notes with non-empty problem and answer sides.
+
+When Obsidian supplies source-section information, the Markdown source decides
+whether a rendered horizontal rule came from `***`; `---`, `___`, and `* * *`
+remain ordinary rules. On render paths where Obsidian supplies no section
+information, the plugin currently falls back to the first rendered horizontal
+rule, so source-level discrimination is not guaranteed there.
 
 ### Feature 1 — what you see
 
@@ -58,16 +67,15 @@ palette entry of the same name both fire the URI:
 interest://sync-anki
 ```
 
-That custom scheme is registered by a **separate companion Android app**
-([**Interest**](https://github.com/Nimeesh-Patel/interest)), which handles the
-actual whole-vault AnkiDroid sync. This plugin's
+That custom scheme is registered by the separate **Interest** Android app,
+which handles the actual whole-vault AnkiDroid sync. This plugin's
 only job is to fire the URI — it does not talk to Anki, sync anything, or touch
 Anki state. Without a companion app registered to that scheme, the button does
 nothing.
 
-> The URI is launched with `window.open(...)`, which is the reliable
-> cross-platform mechanism. The mobile launch path still needs on-device
-> verification on Android.
+> The URI is currently launched with `window.open(...)`. The source-side URI
+> contract is aligned with the companion app; successful Android dispatch still
+> needs on-device verification.
 
 ## Manual installation
 
