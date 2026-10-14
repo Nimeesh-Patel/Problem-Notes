@@ -1,0 +1,18 @@
+import { build } from "esbuild";
+import assert from "node:assert/strict";
+const compiled = await build({entryPoints:["render_separator.ts"], bundle:true, platform:"node", format:"cjs", write:false});
+const module = {exports:{}};
+new Function("module", "exports", compiled.outputFiles[0].text)(module, module.exports);
+const find = module.exports.findAuthoredSeparator;
+const first = {name:"ordinary"}, second = {name:"authored"};
+const el = rules => ({querySelectorAll: () => rules});
+const info = text => ({text,lineStart:0,lineEnd:text.split("\n").length-1});
+assert.equal(find(el([first,second]), info("Context\n\n---\n\nProblem\n***\nAnswer")), second);
+assert.equal(find(el([first]), null), null);
+assert.equal(find(el([first]), info("Text\n---\nProse")), null);
+assert.equal(find(el([first]), info("Question\n***\nAnswer")), first);
+assert.equal(find(el([first,second]), info("Question\n***\nAnswer\n***\nMore")), first);
+assert.equal(find(el([first]), info("```\n***\n```\nQuestion\n***\nAnswer")), first);
+assert.equal(find(el([first]), info("Heading\n---\nQuestion\n***\nAnswer")), null);
+assert.equal(find(el([first]), {text:"Question\n***\nAnswer",lineStart:2,lineEnd:2}), null);
+console.log("Authored render boundary: 8 cases passed");

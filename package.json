@@ -6,8 +6,9 @@
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
 		"test:contract": "node contract-test.mjs",
-		"build": "npm run test:contract && tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
-		"version": "node version-bump.mjs && git add manifest.json versions.json"
+		"build": "npm run test:contract && npm run test:render && tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+		"version": "node version-bump.mjs && git add manifest.json versions.json",
+		"test:render": "node render-separator-test.mjs"
 	},
 	"keywords": [
 		"obsidian",

@@ -33,13 +33,14 @@ fully working.
 Only the **first** qualifying `***` line defines the split; anything after it is
 all "answer side". A fenced `***` example is not a separator. Structurally empty
 sides are accepted by the renderer, but the companion Anki sync reviews only
-notes with non-empty problem and answer sides.
+complete notes without collection membership. Collection notes withdraw existing
+projections; a missing category still selects Default. Interest owns that rule.
 
 When Obsidian supplies source-section information, the Markdown source decides
 whether a rendered horizontal rule came from `***`; `---`, `___`, and `* * *`
-remain ordinary rules. On render paths where Obsidian supplies no section
-information, the plugin currently falls back to the first rendered horizontal
-rule, so source-level discrimination is not guaranteed there.
+remain ordinary rules. The selected rendered rule must correspond to the authored separator in that
+section. With missing or ambiguous source/DOM correspondence, content remains
+plain and visible; an unrelated horizontal rule never authorises hiding it.
 
 ### Feature 1 — what you see
 

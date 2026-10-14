@@ -7,7 +7,7 @@ import {
 	PluginSettingTab,
 	Setting,
 } from "obsidian";
-import { parseProblemNoteStructure } from "./problem_note_contract";
+import { findAuthoredSeparator } from "./render_separator";
 
 /**
  * The companion "Interest" Android app registers this URI as its whole-vault
@@ -96,7 +96,7 @@ export default class ProblemNotesPlugin extends Plugin {
 
 		// Only a block that rendered an <hr> can be the separator. Every other
 		// block is handled in CSS, so skip the render-child overhead.
-		if (!el.querySelector("hr")) return;
+		if (el.tagName !== "HR" && !el.querySelector("hr")) return;
 
 		ctx.addChild(new RevealRenderChild(el, this, ctx));
 	}
@@ -118,7 +118,7 @@ export default class ProblemNotesPlugin extends Plugin {
 	}
 
 	/**
-	 * Partition the rendered note around its FIRST <hr> (the *** separator).
+	 * Partition the rendered note around the source-established first *** rule.
 	 * Runs from a render child's onload, i.e. once `el` is in the document.
 	 *
 	 * Returns false ONLY if `el` is not yet attached (no container found and
@@ -129,7 +129,8 @@ export default class ProblemNotesPlugin extends Plugin {
 		el: HTMLElement,
 		ctx: MarkdownPostProcessorContext
 	): boolean {
-		const hr = el.querySelector("hr");
+		if (!el.isConnected) return false;
+		const hr = findAuthoredSeparator(el, ctx.getSectionInfo(el));
 		if (!hr) return true; // block re-rendered without an hr — nothing to do
 
 		// An <hr> is not the separator. Obsidian renders `---`, `___` and
@@ -137,7 +138,6 @@ export default class ProblemNotesPlugin extends Plugin {
 		// break in book and plan notes. Partitioning on the first <hr> hid the
 		// contents of 39 such notes behind a reveal bar they never asked for.
 		// The convention is a qualifying `***` source line, so check the source.
-		if (!authoredSeparator(el, ctx)) return true;
 
 		// The reading-view container whose direct children are the per-block
 		// section wrappers (.markdown-preview-sizer in a pane, .markdown-rendered
@@ -158,7 +158,8 @@ export default class ProblemNotesPlugin extends Plugin {
 		// No recognizable section container. If el is attached, the whole note
 		// arrived as one element (embed / exported HTML): partition locally.
 		if (el.isConnected) {
-			this.partitionWithinEl(el);
+			if (el === hr) return true;
+			this.partitionWithinEl(el, hr);
 			return true;
 		}
 
@@ -212,11 +213,10 @@ export default class ProblemNotesPlugin extends Plugin {
 
 	/**
 	 * Fallback for whole-note-in-one-element renders (embeds / exported HTML).
-	 * Everything after the first <hr> is moved into a plugin-owned wrapper that
+	 * Everything after the selected authored rule is moved into a plugin-owned wrapper that
 	 * the bar toggles directly — fully self-contained, no ancestor needed.
 	 */
-	private partitionWithinEl(el: HTMLElement) {
-		const hr = el.querySelector("hr");
+	private partitionWithinEl(el: HTMLElement, hr: HTMLHRElement) {
 		if (!hr || el.querySelector(".pn-reveal-bar")) return;
 
 		// The top-level child of el that holds the hr.
@@ -298,33 +298,6 @@ export default class ProblemNotesPlugin extends Plugin {
  * early). The work re-runs on every render, so the reveal is re-established
  * after navigation and restart without depending on getSectionInfo.
  */
-/**
- * True only when this block's Markdown source is the authored `***` separator.
- *
- * `getSectionInfo` is unreliable during post-processing but is expected to be
- * sound from a render child's onload(), which is where this runs. That
- * expectation is not yet verified in a running app, so when it cannot answer —
- * embeds, exported HTML, canvas, or a path where the assumption turns out to be
- * wrong — this falls back to the previous behaviour of treating the <hr> as the
- * separator.
- *
- * The fallback direction is deliberate. Over-triggering hides a note's content
- * behind a bar the reader can still tap; under-triggering would silently
- * disable tap-to-reveal on every Problem Note. Until the assumption is
- * confirmed, the recoverable error is the safer one.
- */
-function authoredSeparator(
-	el: HTMLElement,
-	ctx: MarkdownPostProcessorContext
-): boolean {
-	const info = ctx.getSectionInfo(el);
-	if (!info) return true;
-	const parsed = parseProblemNoteStructure(info.text);
-	return parsed.separatorLine !== null &&
-		parsed.separatorLine >= info.lineStart &&
-		parsed.separatorLine <= info.lineEnd;
-}
-
 class RevealRenderChild extends MarkdownRenderChild {
 	private done = false;
 
