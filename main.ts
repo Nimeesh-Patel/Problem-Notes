@@ -89,7 +89,8 @@ export default class ProblemNotesPlugin extends Plugin {
 	 * Its onload() fires AFTER the block is in the DOM, where we can reliably
 	 * find the reading-view container and partition the note. The render child
 	 * re-runs on every render, so the reveal is re-established each time without
-	 * any dependence on getSectionInfo or on state shared across blocks.
+	 * relying on source-section information from a detached block. Once attached,
+	 * source-section correspondence is required before any content is hidden.
 	 */
 	renderProblemNote(el: HTMLElement, ctx: MarkdownPostProcessorContext) {
 		if (!this.settings.enableReveal) return;
@@ -296,7 +297,8 @@ export default class ProblemNotesPlugin extends Plugin {
  * the block is in the DOM, which is the earliest point the reading-view
  * container can be located reliably (the post-processor callback runs too
  * early). The work re-runs on every render, so the reveal is re-established
- * after navigation and restart without depending on getSectionInfo.
+ * after navigation and restart; attached source-section information still
+ * establishes which rendered rule is the authored separator.
  */
 class RevealRenderChild extends MarkdownRenderChild {
 	private done = false;
