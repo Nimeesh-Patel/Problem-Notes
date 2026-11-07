@@ -11,9 +11,10 @@ import { findAuthoredSeparator } from "./render_separator";
 
 /**
  * The companion "Interest" Android app registers this URI as its AnkiDroid
- * sync entry point. With `?note=<vault-relative path>` it syncs only that note
- * and hands back to AnkiDroid; without it, the whole vault. This plugin only
- * asks the OS to open the URI; it never talks to Anki itself.
+ * sync entry point. It syncs every note changed since the last sync (by
+ * anyone, on any device) and hands back to AnkiDroid; `?all=1` syncs the
+ * whole vault. This plugin only asks the OS to open the URI; it never talks
+ * to Anki itself.
  */
 const SYNC_URI = "interest://sync-anki";
 
@@ -61,6 +62,13 @@ export default class ProblemNotesPlugin extends Plugin {
 		// ── Feature 2: one-tap AnkiDroid sync ────────────────────────────────
 		this.addRibbonIcon("sync", "Sync to AnkiDroid", () => this.fireSyncUri());
 
+		// One tap from the note itself: in the edit cycle the note is what is on
+		// screen, and the ribbon sits behind a menu on mobile.
+		this.app.workspace.onLayoutReady(() => this.addSyncActions());
+		this.registerEvent(
+			this.app.workspace.on("layout-change", () => this.addSyncActions()),
+		);
+
 		this.addCommand({
 			id: "sync-to-ankidroid",
 			name: "Sync to AnkiDroid",
@@ -70,7 +78,7 @@ export default class ProblemNotesPlugin extends Plugin {
 		this.addCommand({
 			id: "sync-vault-to-ankidroid",
 			name: "Sync whole vault to AnkiDroid",
-			callback: () => window.open(SYNC_URI),
+			callback: () => window.open(`${SYNC_URI}?all=1`),
 		});
 
 		this.addSettingTab(new ProblemNotesSettingTab(this.app, this));
@@ -78,20 +86,31 @@ export default class ProblemNotesPlugin extends Plugin {
 
 	/**
 	 * The edit cycle of a review session: a card looked wrong, its note was
-	 * opened from AnkiDroid and changed here. Sync just that note. The editor
-	 * is saved first, because Obsidian writes edits to disk on a short delay
-	 * and Interest reads the file, not the editor. With no note open (or a
-	 * non-Markdown view), the whole vault is synced.
+	 * opened from AnkiDroid and changed here. Interest syncs whatever changed
+	 * since the last sync, so the open editor is saved first: Obsidian writes
+	 * edits to disk on a short delay, and Interest reads files, not editors.
 	 */
 	async fireSyncUri() {
 		const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-		const file = view?.file;
-		if (!view || !file || file.extension !== "md") {
-			window.open(SYNC_URI);
-			return;
+		try {
+			if (view?.file?.extension === "md") await view.save();
+		} catch (error) {
+			// A failed save must not block the sync of everything already on disk.
+			console.error("Problem Notes: could not save before syncing", error);
 		}
-		await view.save();
-		window.open(`${SYNC_URI}?note=${encodeURIComponent(file.path)}`);
+		window.open(SYNC_URI);
+	}
+
+	private readonly withSyncAction = new WeakSet<MarkdownView>();
+
+	/** Adds the sync button to each open note's header, once per view. */
+	private addSyncActions() {
+		this.app.workspace.getLeavesOfType("markdown").forEach((leaf) => {
+			const view = leaf.view;
+			if (!(view instanceof MarkdownView) || this.withSyncAction.has(view)) return;
+			this.withSyncAction.add(view);
+			view.addAction("refresh-cw", "Sync to AnkiDroid", () => this.fireSyncUri());
+		});
 	}
 
 	/**

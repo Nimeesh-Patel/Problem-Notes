@@ -4,8 +4,8 @@ An Obsidian plugin with two small, unrelated features:
 
 1. **Tap-to-reveal `***` notes** — turns notes that use a `***` separator into
    problem/answer cards in reading mode.
-2. **One-tap AnkiDroid sync** — a sidebar button that fires a deep link to a
-   companion Android app.
+2. **One-tap AnkiDroid sync** — a button in every note's header (and the
+   ribbon) that fires a deep link to a companion Android app.
 
 The reading-mode renderer targets desktop and mobile. The plugin **never modifies
 your notes** — it only changes how reading mode renders them, and it fires a URI.
@@ -61,22 +61,22 @@ You can turn this off in **Settings → Problem Notes → Enable tap-to-reveal f
 
 ### Feature 2 — the Sync button
 
-A **sync** icon in the left ribbon (tooltip *"Sync to AnkiDroid"*) and a command
-palette entry of the same name both fire the URI:
+A **sync** icon in each note's header, the left ribbon (tooltip *"Sync to
+AnkiDroid"*) and a command palette entry of the same name all save the open
+note and fire the URI:
 
 ```
 interest://sync-anki
 ```
 
 That custom scheme is registered by the separate **Interest** Android app,
-which handles the actual whole-vault AnkiDroid sync. This plugin's
-only job is to fire the URI — it does not talk to Anki, sync anything, or touch
-Anki state. Without a companion app registered to that scheme, the button does
-nothing.
-
-> The URI is currently launched with `window.open(...)`. The source-side URI
-> contract is aligned with the companion app; successful Android dispatch still
-> needs on-device verification.
+which syncs every note changed since the last sync and hands back to
+AnkiDroid. The command *"Sync whole vault to AnkiDroid"* fires
+`interest://sync-anki?all=1`. This plugin's only job is to save and fire the
+URI — it does not talk to Anki, sync anything, or touch Anki state. Without a
+companion app registered to that scheme, the button does nothing. Verified on
+Android (2026-11-08): one tap in the header returns to AnkiDroid in about
+1.3–1.6 s.
 
 ## Manual installation
 
