@@ -45,7 +45,7 @@ export function parseProblemNoteStructure(source: string): ProblemNoteStructure 
 		hasSeparator: true,
 		problem,
 		conjecture,
-		reviewable: problem.length > 0 && conjecture.length > 0,
+		reviewable: true,
 		separatorLine,
 	};
 }
