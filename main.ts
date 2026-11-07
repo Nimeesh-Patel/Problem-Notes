@@ -10,9 +10,10 @@ import {
 import { findAuthoredSeparator } from "./render_separator";
 
 /**
- * The companion "Interest" Android app registers this URI as its whole-vault
- * AnkiDroid-sync entry point. This plugin only asks the OS to open the URI; it
- * never talks to Anki itself.
+ * The companion "Interest" Android app registers this URI as its AnkiDroid
+ * sync entry point. With `?note=<vault-relative path>` it syncs only that note
+ * and hands back to AnkiDroid; without it, the whole vault. This plugin only
+ * asks the OS to open the URI; it never talks to Anki itself.
  */
 const SYNC_URI = "interest://sync-anki";
 
@@ -66,16 +67,31 @@ export default class ProblemNotesPlugin extends Plugin {
 			callback: () => this.fireSyncUri(),
 		});
 
+		this.addCommand({
+			id: "sync-vault-to-ankidroid",
+			name: "Sync whole vault to AnkiDroid",
+			callback: () => window.open(SYNC_URI),
+		});
+
 		this.addSettingTab(new ProblemNotesSettingTab(this.app, this));
 	}
 
 	/**
-	 * Fire the companion app's deep link through the mechanism currently used by
-	 * the plugin. Source-side URI registration is aligned with the companion app;
-	 * successful OS dispatch still needs on-device verification on Android.
+	 * The edit cycle of a review session: a card looked wrong, its note was
+	 * opened from AnkiDroid and changed here. Sync just that note. The editor
+	 * is saved first, because Obsidian writes edits to disk on a short delay
+	 * and Interest reads the file, not the editor. With no note open (or a
+	 * non-Markdown view), the whole vault is synced.
 	 */
-	fireSyncUri() {
-		window.open(SYNC_URI);
+	async fireSyncUri() {
+		const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+		const file = view?.file;
+		if (!view || !file || file.extension !== "md") {
+			window.open(SYNC_URI);
+			return;
+		}
+		await view.save();
+		window.open(`${SYNC_URI}?note=${encodeURIComponent(file.path)}`);
 	}
 
 	/**
