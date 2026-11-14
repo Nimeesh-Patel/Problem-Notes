@@ -1,15 +1,43 @@
 # Problem Notes
 
-An Obsidian plugin with two small, unrelated features:
+An Obsidian plugin with three small features:
 
 1. **Tap-to-reveal `***` notes** — turns notes that use a `***` separator into
    problem/answer cards in reading mode.
 2. **One-tap AnkiDroid sync** — a button in every note's header (and the
    ribbon) that fires a deep link to a companion Android app.
+3. **Split into a new Problem Note** — the scissors button in a note's header
+   (also a command and an editor-menu item) moves the selection, or
+   everything from the cursor's line to the end, into a new note beside it.
 
-The reading-mode renderer targets desktop and mobile. The plugin **never modifies
-your notes** — it only changes how reading mode renders them, and it fires a URI.
+The reading-mode renderer targets desktop and mobile. Rendering and syncing
+**never modify your notes**. Splitting is the one command that does, and only
+when you run it: see "Splitting a note" below.
 The Android custom-URI handoff has not yet been verified on a device.
+
+## Splitting a note
+
+Refining a Problem Note often means cutting a second idea out of it. Put the
+cursor on the line where the second idea starts (or select the text) and tap
+the scissors. Name the new note; it opens with the cursor on the side that
+is still missing.
+
+- Text from below `***` becomes the new note's conjecture; its problem is
+  left for you to write. Text from above `***` becomes its problem. Text
+  holding its own `***` is moved as a whole Problem Note.
+- The new note keeps the source's `category:` (its Anki deck), and its
+  `collection:` when the source is withdrawn from Anki. It never copies
+  `anki_note_id`, because two notes naming one card stop the sync, nor
+  `up:`, because a cut does not say how the two problems relate.
+- A link to the new note is left where the text was (a setting turns this
+  off). The source keeps its card and review history; the new note gets a
+  new card on the next sync.
+- The new note is created before the source changes, so a failure can
+  leave the text in both notes but never in neither.
+
+`split_note.ts` holds the text handling and `split-note-test.mjs` its cases
+(`npm run test:split`, part of `npm run build`). Verified on 2026-11-11 in
+Obsidian on Windows and on Android.
 
 ## The `***` convention
 

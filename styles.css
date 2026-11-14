@@ -74,3 +74,17 @@
 .pn-answer-wrapper.pn-revealed {
 	display: revert;
 }
+
+/* Split dialog: the start of the text that will move, and a refusal. */
+.pn-split-preview {
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	margin: 0 0 var(--size-4-3);
+}
+
+.pn-split-error {
+	color: var(--text-error);
+	font-size: var(--font-ui-small);
+	min-height: 1.2em;
+	margin: 0;
+}

@@ -1,13 +1,18 @@
 import {
 	App,
+	Editor,
 	MarkdownPostProcessorContext,
 	MarkdownRenderChild,
 	MarkdownView,
+	Modal,
+	Notice,
 	Plugin,
 	PluginSettingTab,
 	Setting,
+	TFile,
 } from "obsidian";
 import { findAuthoredSeparator } from "./render_separator";
+import { splitProblemNote, titleProblem } from "./split_note";
 
 /**
  * The companion "Interest" Android app registers this URI as its AnkiDroid
@@ -31,10 +36,13 @@ const SYNC_URI = "interest://sync-anki";
  */
 interface ProblemNotesSettings {
 	enableReveal: boolean;
+	/** Leave a link to the new note where the split-off text was. */
+	linkAfterSplit: boolean;
 }
 
 const DEFAULT_SETTINGS: ProblemNotesSettings = {
 	enableReveal: true,
+	linkAfterSplit: true,
 };
 
 export default class ProblemNotesPlugin extends Plugin {
@@ -81,6 +89,34 @@ export default class ProblemNotesPlugin extends Plugin {
 			callback: () => window.open(`${SYNC_URI}?all=1`),
 		});
 
+		// ── Feature 3: split a note in two ───────────────────────────────────
+		// Refining a Problem Note often means cutting a second idea out of it.
+		// The selection moves; with nothing selected, everything from the
+		// cursor's line to the end moves, so a phone needs one tap, not a
+		// text selection.
+		this.addCommand({
+			id: "split-into-new-problem-note",
+			name: "Split into a new Problem Note",
+			editorCheckCallback: (checking, editor, ctx) => {
+				const file = ctx.file;
+				if (!file || file.extension !== "md") return false;
+				if (!checking) this.splitNote(editor, file);
+				return true;
+			},
+		});
+		this.registerEvent(
+			this.app.workspace.on("editor-menu", (menu, editor, info) => {
+				const file = info.file;
+				if (!file || file.extension !== "md") return;
+				menu.addItem((item) =>
+					item
+						.setTitle("Split into a new Problem Note")
+						.setIcon("scissors")
+						.onClick(() => this.splitNote(editor, file)),
+				);
+			}),
+		);
+
 		this.addSettingTab(new ProblemNotesSettingTab(this.app, this));
 	}
 
@@ -110,7 +146,56 @@ export default class ProblemNotesPlugin extends Plugin {
 			if (!(view instanceof MarkdownView) || this.withSyncAction.has(view)) return;
 			this.withSyncAction.add(view);
 			view.addAction("refresh-cw", "Sync to AnkiDroid", () => this.fireSyncUri());
+			view.addAction("scissors", "Split into a new Problem Note", () => {
+				if (view.file) this.splitNote(view.editor, view.file);
+			});
 		});
+	}
+
+	/**
+	 * Moves the selection, or everything from the cursor's line to the end,
+	 * into a new note beside this one. The new note is created before the
+	 * source changes, so a failure can leave the text in both notes but never
+	 * in neither.
+	 */
+	splitNote(editor: Editor, file: TFile) {
+		const source = editor.getValue();
+		const selected = editor.somethingSelected();
+		const from = selected
+			? editor.posToOffset(editor.getCursor("from"))
+			: editor.posToOffset({ line: editor.getCursor().line, ch: 0 });
+		const to = selected ? editor.posToOffset(editor.getCursor("to")) : source.length;
+		const request = { source, from, to, leaveLink: this.settings.linkAfterSplit };
+
+		// Refuse before asking for a name when there is nothing to split.
+		const dry = splitProblemNote({ ...request, title: "x" });
+		if (typeof dry === "string") {
+			new Notice(dry);
+			return;
+		}
+		const moving = source.slice(from, to).trim();
+		new SplitTitleModal(this.app, moving, async (title) => {
+			const result = splitProblemNote({ ...request, title });
+			if (typeof result === "string") return result;
+			const folder = file.parent && file.parent.path !== "/" ? `${file.parent.path}/` : "";
+			const path = `${folder}${title.trim()}.md`;
+			if (await this.app.vault.adapter.exists(path)) {
+				return `A note named "${title.trim()}" already exists.`;
+			}
+			if (editor.getValue() !== source) {
+				return "The note changed while you were naming the new one.";
+			}
+			const created = await this.app.vault.create(path, result.created);
+			editor.setValue(result.source);
+			const leaf = this.app.workspace.getLeaf(false);
+			await leaf.openFile(created, { state: { mode: "source" } });
+			const view = leaf.view;
+			if (view instanceof MarkdownView) {
+				view.editor.setCursor(view.editor.offsetToPos(result.cursorOffset));
+				view.editor.focus();
+			}
+			return null;
+		}).open();
 	}
 
 	/**
@@ -366,6 +451,60 @@ class RevealRenderChild extends MarkdownRenderChild {
 	}
 }
 
+/** Asks for the new note's name, showing the start of what will move. */
+class SplitTitleModal extends Modal {
+	private title = "";
+	private errorEl!: HTMLElement;
+
+	constructor(
+		app: App,
+		private moving: string,
+		/** Returns a message when the split was refused, or null once done. */
+		private onSubmit: (title: string) => Promise<string | null>
+	) {
+		super(app);
+	}
+
+	onOpen() {
+		this.setTitle("Split into a new Problem Note");
+		const preview = this.moving.replace(/\s+/g, " ");
+		this.contentEl.createEl("p", {
+			cls: "pn-split-preview",
+			text: preview.length > 160 ? `${preview.slice(0, 160)}…` : preview,
+		});
+		new Setting(this.contentEl).setName("Name").addText((text) => {
+			text.setPlaceholder("New note's name").onChange((value) => {
+				this.title = value;
+				this.errorEl.setText("");
+			});
+			text.inputEl.addEventListener("keydown", (event) => {
+				if (event.key === "Enter") {
+					event.preventDefault();
+					this.submit();
+				}
+			});
+			window.setTimeout(() => text.inputEl.focus(), 0);
+		});
+		this.errorEl = this.contentEl.createEl("p", { cls: "pn-split-error" });
+		new Setting(this.contentEl).addButton((button) =>
+			button.setButtonText("Split").setCta().onClick(() => this.submit())
+		);
+	}
+
+	private async submit() {
+		const refusal = titleProblem(this.title) ?? (await this.onSubmit(this.title));
+		if (refusal) {
+			this.errorEl.setText(refusal);
+			return;
+		}
+		this.close();
+	}
+
+	onClose() {
+		this.contentEl.empty();
+	}
+}
+
 class ProblemNotesSettingTab extends PluginSettingTab {
 	plugin: ProblemNotesPlugin;
 
@@ -390,6 +529,21 @@ class ProblemNotesSettingTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.enableReveal)
 					.onChange(async (value) => {
 						this.plugin.settings.enableReveal = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Leave a link after splitting")
+			.setDesc(
+				"When a note is split, put a link to the new note where the " +
+					"moved text was."
+			)
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.linkAfterSplit)
+					.onChange(async (value) => {
+						this.plugin.settings.linkAfterSplit = value;
 						await this.plugin.saveSettings();
 					})
 			);
