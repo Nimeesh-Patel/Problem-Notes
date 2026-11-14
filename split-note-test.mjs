@@ -10,7 +10,9 @@ const compiled = await build({
 });
 const module = { exports: {} };
 new Function("module", "exports", compiled.outputFiles[0].text)(module, module.exports);
-const { splitProblemNote, titleProblem, bodyStart } = module.exports;
+const { splitProblemNote: split, titleProblem, bodyStart, childProperties } = module.exports;
+const template = "---\nup: null\ncriticisms: null\ncategory: Default\n---\n\n***\n\n";
+const splitProblemNote = (request) => split({ template, ...request });
 
 const note = [
 	"---",
@@ -46,10 +48,10 @@ check("the end of a conjecture becomes a new note with the same deck", () => {
 	});
 	assert.equal(
 		result.created,
-		"---\nup: null\ncategory: Morality\n---\n\n***\nSecond idea, about democracy.\nMore on the second idea.\n"
+		"---\nup: null\ncriticisms: null\ncategory: Default\n---\n\n***\n\nSecond idea, about democracy.\nMore on the second idea.\n"
 	);
 	// The cursor waits where the missing problem is written.
-	assert.equal(result.created.slice(0, result.cursorOffset), "---\nup: null\ncategory: Morality\n---\n");
+	assert.equal(result.created.slice(0, result.cursorOffset), "---\nup: null\ncriticisms: null\ncategory: Default\n---\n\n");
 	assert.equal(
 		result.source,
 		note.slice(0, at("Second idea")).trimEnd() + "\n\n[[Fun criterion and democracy]]\n"
@@ -77,7 +79,7 @@ check("without a link the gap closes and nothing else changes", () => {
 		leaveLink: false,
 	});
 	assert.equal(result.source, note.replace("First idea, about conflicting criteria.\n\n", ""));
-	assert.ok(result.created.endsWith("***\nFirst idea, about conflicting criteria.\n"));
+	assert.ok(result.created.endsWith("***\n\nFirst idea, about conflicting criteria.\n"));
 });
 
 check("text from the problem side becomes a problem awaiting its conjecture", () => {
@@ -92,7 +94,7 @@ check("text from the problem side becomes a problem awaiting its conjecture", ()
 	});
 	assert.equal(
 		result.created,
-		"---\nup: null\ncategory: Morality\n---\nAnd what does authority do to fun?\n***\n"
+		"---\nup: null\ncriticisms: null\ncategory: Default\n---\n\nAnd what does authority do to fun?\n***\n\n"
 	);
 	assert.equal(result.cursorOffset, result.created.length);
 	assert.equal(result.source, note);
@@ -107,7 +109,7 @@ check("text holding its own *** is already a whole Problem Note", () => {
 		title: "Second",
 		leaveLink: false,
 	});
-	assert.ok(result.created.endsWith("---\nA second problem?\n***\nIts conjecture.\n"));
+	assert.ok(result.created.endsWith("---\n\nA second problem?\n***\n\nIts conjecture.\n"));
 	assert.equal(result.source, note);
 });
 
@@ -120,10 +122,10 @@ check("part of a line moves and the sentence stays one line", () => {
 		leaveLink: true,
 	});
 	assert.ok(result.source.includes("Second idea, [[Democracy]].\nMore on the second idea."));
-	assert.ok(result.created.endsWith("***\nabout democracy\n"));
+	assert.ok(result.created.endsWith("***\n\nabout democracy\n"));
 });
 
-check("a list-form deck and CRLF line endings are kept as written", () => {
+check("a template is converted to the source CRLF line endings", () => {
 	const crlf = "---\r\ncategory:\r\n  - Enlightenment and Institutions\r\nanki_note_id: 5\r\n---\r\nQ\r\n***\r\nA\r\n\r\nB\r\n";
 	const result = splitProblemNote({
 		source: crlf,
@@ -134,7 +136,7 @@ check("a list-form deck and CRLF line endings are kept as written", () => {
 	});
 	assert.equal(
 		result.created,
-		"---\r\nup: null\r\ncategory:\r\n  - Enlightenment and Institutions\r\n---\r\n\r\n***\r\nB\r\n"
+		"---\r\nup: null\r\ncriticisms: null\r\ncategory: Default\r\n---\r\n\r\n***\r\n\r\nB\r\n"
 	);
 	assert.equal(result.source, crlf.replace("\r\n\r\nB\r\n", "\r\n"));
 });
@@ -142,7 +144,7 @@ check("a list-form deck and CRLF line endings are kept as written", () => {
 check("a note with no deck goes to Default", () => {
 	const plain = "Q\n***\nA\n\nB\n";
 	const result = splitProblemNote({ source: plain, from: plain.indexOf("B"), to: plain.length, title: "B", leaveLink: false });
-	assert.ok(result.created.startsWith("---\nup: null\ncategory: Default\n---\n"));
+	assert.ok(result.created.startsWith("---\nup: null\ncriticisms: null\ncategory: Default\n---\n"));
 });
 
 check("a note withdrawn from Anki splits into a withdrawn note", () => {
@@ -153,8 +155,9 @@ check("a note withdrawn from Anki splits into a withdrawn note", () => {
 		to: withdrawn.length,
 		title: "B",
 		leaveLink: false,
+		template: template.replace("category: Default", "category: Default\ncollection: People"),
 	});
-	assert.ok(result.created.startsWith(["---", "up: null", "collection: People", "---", ""].join(NL)));
+	assert.ok(result.created.includes("collection: People"));
 	assert.ok(!result.created.includes("anki_note_id"));
 });
 
@@ -167,6 +170,28 @@ check("refusals say what is wrong", () => {
 	assert.match(splitProblemNote({ ...base, title: "B", from: at("What problem") }), /whole note/);
 	assert.equal(titleProblem("Fun criterion and democracy"), null);
 	assert.equal(bodyStart("no properties"), 0);
+});
+
+check("the original divider cannot be moved", () => {
+	assert.match(splitProblemNote({
+		source: note, from: at("***"),
+		to: at("Second idea"), title: "B", leaveLink: true,
+	}), /original.*divider/);
+});
+
+check("template fields survive and only placement comes from the source", () => {
+	assert.deepEqual(
+		childProperties(
+			{ up: null, criticisms: null, category: "Default", custom: 1, anki_note_id: 5 },
+			{ up: ["[[A]]"], criticisms: ["[[B]]"], category: "Ethics", collection: "People", exclude_resurface: true },
+		),
+		{ up: null, criticisms: null, category: "Ethics", collection: "People", exclude_resurface: true, custom: 1 },
+	);
+	const result = splitProblemNote({
+		source: note, from: at("Second idea"), to: note.length, title: "B", leaveLink: true,
+		template: template.replace("***", "Scaffold\n\n***"),
+	});
+	assert.match(result.created, /Scaffold\n\n\*\*\*/);
 });
 
 console.log(`Split note: ${cases} cases passed`);

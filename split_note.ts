@@ -16,6 +16,8 @@ export interface SplitRequest {
 	title: string;
 	/** Leave a `[[title]]` link where the text was. */
 	leaveLink: boolean;
+	/** The vault template with the child’s properties already set. */
+	template: string;
 }
 
 export interface SplitResult {
@@ -42,35 +44,33 @@ export function titleProblem(title: string): string | null {
 
 /** Where the frontmatter ends: the offset of the first body character. */
 export function bodyStart(source: string): number {
-	const open = source.match(/^---[ \t]*\r?\n/);
+	const open = source.match(/^\uFEFF?---[ \t]*\r?\n/);
 	if (!open) return 0;
 	const close = source.slice(open[0].length).match(/^---[ \t]*(?:\r?\n|$)/m);
 	if (!close || close.index === undefined) return 0;
 	return open[0].length + close.index + close[0].length;
 }
 
-/**
- * The new note keeps where the source lives and nothing else of its identity:
- * its deck, and its `collection:` when the source is withdrawn from Anki, so
- * splitting a withdrawn note cannot create a card. `anki_note_id` must not
- * travel: two notes naming one card stop the sync, because only the author
- * knows which note the card belongs to. `up:` is a claim about how the two
- * problems relate, which a cut does not establish.
- */
-function inheritedPlacement(source: string, newline: string): string {
-	const lines = source.slice(0, bodyStart(source)).split(/\r?\n/);
-	const kept: string[] = [];
-	for (const key of ["category", "collection"]) {
-		const start = lines.findIndex((line) => line.replace(/\s*:.*$/, "") === key);
-		if (start < 0) continue;
-		kept.push(lines[start]);
-		for (let index = start + 1; index < lines.length; index++) {
-			// A list or continuation line belongs to the key above it.
-			if (!/^(?:\s+\S|-\s)/.test(lines[index])) break;
-			kept.push(lines[index]);
-		}
+/** Only deck and sync eligibility travel with the moved passage. */
+export function childProperties(
+	template: Record<string, unknown>,
+	source: Record<string, unknown>,
+): Record<string, unknown> {
+	const properties = { ...template };
+	delete properties.anki_note_id;
+	for (const key of ["category", "collection", "exclude_resurface"]) {
+		if (Object.prototype.hasOwnProperty.call(source, key)) properties[key] = source[key];
 	}
-	return kept.length ? kept.join(newline) : "category: Default";
+	return properties;
+}
+
+/** Offsets of the first authored divider, with or without CRLF. */
+function divider(text: string): { start: number; end: number } | null {
+	const { separatorLine } = parseProblemNoteStructure(text);
+	if (separatorLine === null) return null;
+	const lines = text.match(/[^\n]*\n|[^\n]+$/g) ?? [];
+	const start = lines.slice(0, separatorLine).join("").length;
+	return { start, end: start + lines[separatorLine].replace(/\s+$/, "").length };
 }
 
 const SEPARATOR_OR_PROPERTIES_END = /(?:^|\n)(?:---|\*\*\*)[ \t]*$/;
@@ -144,29 +144,38 @@ export function splitProblemNote(request: SplitRequest): SplitResult | string {
 		return "That would move the whole note. Put the cursor where the second idea starts.";
 	}
 
-	// What moves decides the shape of the new note. Text holding its own ***
-	// is already a problem and a conjecture. Text from above the source's ***
-	// is a problem whose conjecture is still to be written; anything else is a
-	// conjecture whose problem is still to be written. Only the author can
-	// write either, so the cursor goes to the side that is missing.
-	const head = ["---", "up: null", inheritedPlacement(source, newline), "---", ""].join(newline);
-	const cutIsBelowSeparator = parseProblemNoteStructure(source.slice(0, from)).hasSeparator;
-	let body: string;
-	let cursorOffset: number;
-	if (parseProblemNoteStructure(moved).hasSeparator) {
-		body = moved + newline;
-		cursorOffset = head.length;
-	} else if (!cutIsBelowSeparator && parseProblemNoteStructure(source).hasSeparator) {
-		body = moved + newline + "***" + newline;
-		cursorOffset = head.length + body.length;
-	} else {
-		body = newline + "***" + newline + moved + newline;
-		cursorOffset = head.length;
+	const originalDivider = divider(source);
+	const remaining = closeGap(source, from, to, leaveLink ? `[[${title}]]` : "", newline);
+	if (originalDivider && (
+		(from < originalDivider.end && to > originalDivider.start) || !divider(remaining)
+	)) {
+		return "Leave the original problem/conjecture divider in place. Select text on either side.";
 	}
 
+	const template = request.template.replace(/\r?\n/g, newline);
+	const templateDivider = divider(template);
+	if (!templateDivider) return "The Problem Note template needs an authored *** divider.";
+
+	const movedDivider = divider(moved);
+	const fromProblem = originalDivider !== null && to <= originalDivider.start;
+	const problemText = movedDivider ? moved.slice(0, movedDivider.start).replace(/\s+$/, "") : fromProblem ? moved : "";
+	const conjectureText = movedDivider ? moved.slice(movedDivider.end).replace(/^\r?\n/, "") : fromProblem ? "" : moved;
+
+	// Keep the template's divider and scaffold. Add the moved text at the end
+	// of its corresponding side, leaving the other side available to write.
+	const { start, end } = templateDivider;
+	const before = template.slice(0, start);
+	const after = template.slice(end);
+	const problemSide = problemText ? before + problemText + newline : before;
+	const conjectureSlot = after.endsWith(newline) ? after : after + newline;
+	const conjectureSide = conjectureText ? conjectureSlot + conjectureText + newline : conjectureSlot;
+	const headingAndDivider = problemSide + template.slice(start, end);
+	const created = headingAndDivider + conjectureSide;
+	if (!divider(created)) return "The moved text would hide the new note's divider inside a code block.";
+
 	return {
-		source: closeGap(source, from, to, leaveLink ? `[[${title}]]` : "", newline),
-		created: head + body,
-		cursorOffset,
+		source: remaining,
+		created,
+		cursorOffset: movedDivider || !fromProblem ? before.length : headingAndDivider.length + conjectureSlot.length,
 	};
 }

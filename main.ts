@@ -1,18 +1,21 @@
 import {
 	App,
 	Editor,
+	getFrontMatterInfo,
 	MarkdownPostProcessorContext,
 	MarkdownRenderChild,
 	MarkdownView,
 	Modal,
 	Notice,
+	parseYaml,
 	Plugin,
 	PluginSettingTab,
 	Setting,
+	stringifyYaml,
 	TFile,
 } from "obsidian";
 import { findAuthoredSeparator } from "./render_separator";
-import { splitProblemNote, titleProblem } from "./split_note";
+import { bodyStart, childProperties, splitProblemNote, titleProblem } from "./split_note";
 
 /**
  * The companion "Interest" Android app registers this URI as its AnkiDroid
@@ -22,6 +25,7 @@ import { splitProblemNote, titleProblem } from "./split_note";
  * to Anki itself.
  */
 const SYNC_URI = "interest://sync-anki";
+const SPLIT_TEMPLATE = "Templates/Problem Note.md";
 
 /**
  * The first line whose trimmed Markdown source is "***", outside a
@@ -158,39 +162,78 @@ export default class ProblemNotesPlugin extends Plugin {
 	 * source changes, so a failure can leave the text in both notes but never
 	 * in neither.
 	 */
-	splitNote(editor: Editor, file: TFile) {
+	async splitNote(editor: Editor, file: TFile) {
 		const source = editor.getValue();
 		const selected = editor.somethingSelected();
 		const from = selected
 			? editor.posToOffset(editor.getCursor("from"))
 			: editor.posToOffset({ line: editor.getCursor().line, ch: 0 });
 		const to = selected ? editor.posToOffset(editor.getCursor("to")) : source.length;
-		const request = { source, from, to, leaveLink: this.settings.linkAfterSplit };
+		const sourcePath = file.path;
+		const leaf = this.app.workspace.getLeavesOfType("markdown").find(({ view }) =>
+			view instanceof MarkdownView && view.file === file && view.editor === editor
+		);
+		if (!leaf) return;
+		const sourceIsCurrent = () =>
+			leaf.view instanceof MarkdownView && leaf.view.file === file &&
+			leaf.view.editor === editor && file.path === sourcePath && editor.getValue() === source;
 
-		// Refuse before asking for a name when there is nothing to split.
-		const dry = splitProblemNote({ ...request, title: "x" });
-		if (typeof dry === "string") {
-			new Notice(dry);
+		let diskAtStart: string;
+		try {
+			diskAtStart = await this.app.vault.read(file);
+		} catch {
+			new Notice("The source note could not be read.");
 			return;
 		}
-		const moving = source.slice(from, to).trim();
-		new SplitTitleModal(this.app, moving, async (title) => {
-			const result = splitProblemNote({ ...request, title });
+		if (!sourceIsCurrent()) {
+			new Notice("The source note changed. Start the split again.");
+			return;
+		}
+		new SplitTitleModal(this.app, source.slice(from, to).trim(), async (title) => {
+			const templateFile = this.app.vault.getAbstractFileByPath(SPLIT_TEMPLATE);
+			if (!(templateFile instanceof TFile)) return `Missing ${SPLIT_TEMPLATE}.`;
+			const template = await this.app.vault.read(templateFile);
+			const frontmatter = (text: string) =>
+				parseYaml(getFrontMatterInfo(text).frontmatter) ?? {};
+			const properties = childProperties(frontmatter(template), frontmatter(source));
+			const result = splitProblemNote({
+				source, from, to, title, leaveLink: this.settings.linkAfterSplit,
+				template: "---\n" + stringifyYaml(properties).replace(/\s+$/, "") + "\n---\n" + template.slice(bodyStart(template)),
+			});
 			if (typeof result === "string") return result;
+
 			const folder = file.parent && file.parent.path !== "/" ? `${file.parent.path}/` : "";
 			const path = `${folder}${title.trim()}.md`;
 			if (await this.app.vault.adapter.exists(path)) {
 				return `A note named "${title.trim()}" already exists.`;
 			}
-			if (editor.getValue() !== source) {
-				return "The note changed while you were naming the new one.";
+			const diskBefore = await this.app.vault.read(file);
+			if (!sourceIsCurrent() || (diskBefore !== diskAtStart && diskBefore !== source)) {
+				return "The source note changed. Start the split again.";
 			}
 			const created = await this.app.vault.create(path, result.created);
-			editor.setValue(result.source);
-			const leaf = this.app.workspace.getLeaf(false);
+			const diskAfter = await this.app.vault.read(file);
+			if (!sourceIsCurrent() || (diskAfter !== diskBefore && diskAfter !== source)) {
+				new Notice(`Created "${created.basename}". The source changed during Split and was left intact.`);
+				return null;
+			}
+			// Keep the unchanged portions of the editor buffer intact.
+			let start = 0;
+			while (start < source.length && source[start] === result.source[start]) start++;
+			let end = source.length;
+			let replacementEnd = result.source.length;
+			while (end > start && replacementEnd > start &&
+				source[end - 1] === result.source[replacementEnd - 1]) {
+				end--;
+				replacementEnd--;
+			}
+			editor.replaceRange(
+				result.source.slice(start, replacementEnd),
+				editor.offsetToPos(start), editor.offsetToPos(end),
+			);
 			await leaf.openFile(created, { state: { mode: "source" } });
 			const view = leaf.view;
-			if (view instanceof MarkdownView) {
+			if (view instanceof MarkdownView && view.file === created) {
 				view.editor.setCursor(view.editor.offsetToPos(result.cursorOffset));
 				view.editor.focus();
 			}
@@ -454,6 +497,7 @@ class RevealRenderChild extends MarkdownRenderChild {
 /** Asks for the new note's name, showing the start of what will move. */
 class SplitTitleModal extends Modal {
 	private title = "";
+	private submitting = false;
 	private errorEl!: HTMLElement;
 
 	constructor(
@@ -492,12 +536,17 @@ class SplitTitleModal extends Modal {
 	}
 
 	private async submit() {
-		const refusal = titleProblem(this.title) ?? (await this.onSubmit(this.title));
-		if (refusal) {
-			this.errorEl.setText(refusal);
-			return;
+		if (this.submitting) return;
+		this.submitting = true;
+		try {
+			const refusal = titleProblem(this.title) ?? (await this.onSubmit(this.title));
+			if (refusal) this.errorEl.setText(refusal);
+			else this.close();
+		} catch (error) {
+			this.errorEl.setText(String(error));
+		} finally {
+			this.submitting = false;
 		}
-		this.close();
 	}
 
 	onClose() {

@@ -22,18 +22,15 @@ cursor on the line where the second idea starts (or select the text) and tap
 the scissors. Name the new note; it opens with the cursor on the side that
 is still missing.
 
-- Text from below `***` becomes the new note's conjecture; its problem is
-  left for you to write. Text from above `***` becomes its problem. Text
-  holding its own `***` is moved as a whole Problem Note.
-- The new note keeps the source's `category:` (its Anki deck), and its
-  `collection:` when the source is withdrawn from Anki. It never copies
-  `anki_note_id`, because two notes naming one card stop the sync, nor
-  `up:`, because a cut does not say how the two problems relate.
-- A link to the new note is left where the text was (a setting turns this
-  off). The source keeps its card and review history; the new note gets a
-  new card on the next sync.
-- The new note is created before the source changes, so a failure can
-  leave the text in both notes but never in neither.
+- The child starts from the vault's `Templates/Problem Note.md`. The selection
+  goes on the corresponding side of the template's divider. The original
+  divider must stay in place. A later, separate problem with its own divider
+  can move both sides together.
+- The child inherits the original's deck and Anki exclusions. Its `up:` and
+  `criticisms:` come from the template, and its card ID starts empty.
+- A link to the child is left where the text was (a setting turns this off).
+  The child is created first. If the source changes in the meantime, the
+  plugin leaves it intact and names the new note so you can reconcile them.
 
 `split_note.ts` holds the text handling and `split-note-test.mjs` its cases
 (`npm run test:split`, part of `npm run build`). Verified on 2026-11-11 in
@@ -59,10 +56,7 @@ fully working.
 ```
 
 Only the **first** qualifying `***` line defines the split; anything after it is
-all "answer side". A fenced `***` example is not a separator. Structurally empty
-sides are accepted by the renderer, but the companion Anki sync reviews only
-complete notes without collection membership. Collection notes withdraw existing
-projections; a missing category still selects Default. Interest owns that rule.
+all "answer side". A fenced `***` example is not a separator. Empty sides are accepted. Interest owns Anki eligibility, deck selection, and withdrawals.
 
 When Obsidian supplies source-section information, the Markdown source decides
 whether a rendered horizontal rule came from `***`; `---`, `___`, and `* * *`
