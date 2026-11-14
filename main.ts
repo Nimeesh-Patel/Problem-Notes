@@ -212,7 +212,7 @@ export default class ProblemNotesPlugin extends Plugin {
 				return "The source note changed. Start the split again.";
 			}
 			const created = await this.app.vault.create(path, result.created);
-			const diskAfter = await this.app.vault.read(file);
+			const diskAfter = await this.app.vault.read(file).catch(() => null);
 			if (!sourceIsCurrent() || (diskAfter !== diskBefore && diskAfter !== source)) {
 				new Notice(`Created "${created.basename}". The source changed during Split and was left intact.`);
 				return null;

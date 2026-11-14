@@ -146,10 +146,14 @@ export function splitProblemNote(request: SplitRequest): SplitResult | string {
 
 	const originalDivider = divider(source);
 	const remaining = closeGap(source, from, to, leaveLink ? `[[${title}]]` : "", newline);
-	if (originalDivider && (
-		(from < originalDivider.end && to > originalDivider.start) || !divider(remaining)
-	)) {
-		return "Leave the original problem/conjecture divider in place. Select text on either side.";
+	if (originalDivider) {
+		const cutsDivider = from < originalDivider.end && to > originalDivider.start;
+		const dividerOffset = to <= originalDivider.start
+			? originalDivider.start + remaining.length - source.length
+			: originalDivider.start;
+		if (cutsDivider || divider(remaining)?.start !== dividerOffset) {
+			return "Leave the original problem/conjecture divider in place. Select text on either side.";
+		}
 	}
 
 	const template = request.template.replace(/\r?\n/g, newline);
