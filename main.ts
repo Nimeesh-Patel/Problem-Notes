@@ -90,7 +90,7 @@ export default class ProblemNotesPlugin extends Plugin {
 		this.addCommand({
 			id: "sync-vault-to-ankidroid",
 			name: "Sync whole vault to AnkiDroid",
-			callback: () => window.open(`${SYNC_URI}?all=1`),
+			callback: () => this.fireSyncUri(true),
 		});
 
 		// ── Feature 3: split a note in two ───────────────────────────────────
@@ -130,15 +130,19 @@ export default class ProblemNotesPlugin extends Plugin {
 	 * since the last sync, so the open editor is saved first: Obsidian writes
 	 * edits to disk on a short delay, and Interest reads files, not editors.
 	 */
-	async fireSyncUri() {
-		const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+	async fireSyncUri(
+		all = false,
+		view = this.app.workspace.getActiveViewOfType(MarkdownView),
+	) {
+		const file = view?.file;
 		try {
-			if (view?.file?.extension === "md") await view.save();
+			if (view && file?.extension === "md") await view.save();
 		} catch (error) {
-			// A failed save must not block the sync of everything already on disk.
 			console.error("Problem Notes: could not save before syncing", error);
+			new Notice(`Couldn't save “${file?.basename}”. Save the note and try syncing again.`);
+			return;
 		}
-		window.open(SYNC_URI);
+		window.open(all ? `${SYNC_URI}?all=1` : SYNC_URI);
 	}
 
 	private readonly withSyncAction = new WeakSet<MarkdownView>();
@@ -149,7 +153,7 @@ export default class ProblemNotesPlugin extends Plugin {
 			const view = leaf.view;
 			if (!(view instanceof MarkdownView) || this.withSyncAction.has(view)) return;
 			this.withSyncAction.add(view);
-			view.addAction("refresh-cw", "Sync to AnkiDroid", () => this.fireSyncUri());
+			view.addAction("refresh-cw", "Sync to AnkiDroid", () => this.fireSyncUri(false, view));
 			view.addAction("scissors", "Split into a new Problem Note", () => {
 				if (view.file) this.splitNote(view.editor, view.file);
 			});
@@ -189,7 +193,8 @@ export default class ProblemNotesPlugin extends Plugin {
 			new Notice("The source note changed. Start the split again.");
 			return;
 		}
-		new SplitTitleModal(this.app, source.slice(from, to).trim(), async (title) => {
+		const moveLabel = selected ? "Move selected text" : "Move from cursor line to end";
+		new SplitTitleModal(this.app, moveLabel, source.slice(from, to).trim(), async (title) => {
 			const templateFile = this.app.vault.getAbstractFileByPath(SPLIT_TEMPLATE);
 			if (!(templateFile instanceof TFile)) return `Missing ${SPLIT_TEMPLATE}.`;
 			const template = await this.app.vault.read(templateFile);
@@ -430,7 +435,7 @@ export default class ProblemNotesPlugin extends Plugin {
 			const revealed = anchor.classList.contains("pn-revealed");
 			bar.toggleClass("pn-revealed", revealed);
 			bar.setAttribute("aria-expanded", revealed ? "true" : "false");
-			bar.setText(revealed ? "Hide answer" : "Tap to reveal");
+			bar.setText(revealed ? "Hide conjecture" : "Reveal conjecture");
 		};
 
 		const onToggle = (e: Event) => {
@@ -502,6 +507,7 @@ class SplitTitleModal extends Modal {
 
 	constructor(
 		app: App,
+		private moveLabel: string,
 		private moving: string,
 		/** Returns a message when the split was refused, or null once done. */
 		private onSubmit: (title: string) => Promise<string | null>
@@ -511,6 +517,7 @@ class SplitTitleModal extends Modal {
 
 	onOpen() {
 		this.setTitle("Split into a new Problem Note");
+		this.contentEl.createEl("p", { text: this.moveLabel });
 		const preview = this.moving.replace(/\s+/g, " ");
 		this.contentEl.createEl("p", {
 			cls: "pn-split-preview",

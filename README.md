@@ -69,7 +69,7 @@ plain and visible; an unrelated horizontal rule never authorises hiding it.
 In **reading mode**:
 
 - The problem (above `***`) renders normally.
-- The `***` separator is replaced by a subtle **"Tap to reveal"** bar.
+- The `***` separator becomes a **Reveal conjecture** control.
 - The answer (below `***`) is hidden until you tap the bar; tapping again hides
   it. All normal Markdown — wikilinks, formatting, embeds — keeps working,
   because the plugin reorganizes already-rendered elements rather than
@@ -94,7 +94,8 @@ interest://sync-anki
 That custom scheme is registered by the separate **Interest** Android app,
 which syncs every note changed since the last sync and hands back to
 AnkiDroid. The command *"Sync whole vault to AnkiDroid"* fires
-`interest://sync-anki?all=1`. This plugin's only job is to save and fire the
+`interest://sync-anki?all=1` after saving. If saving fails, the plugin
+names the note and stops the handoff. The plugin saves and opens the
 URI — it does not talk to Anki, sync anything, or touch Anki state. Without a
 companion app registered to that scheme, the button does nothing. Verified on
 Android (2026-11-08): one tap in the header returns to AnkiDroid in about
